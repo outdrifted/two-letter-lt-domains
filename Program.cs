@@ -1,62 +1,85 @@
 ﻿using System;
-using System.IO;
+using System.Net.Sockets;
 using System.Text;
+using System.IO;
+using System.Collections.Generic;
+using System.Linq;
 
-namespace FilterRegisteredDomains
+namespace DASDomainChecker
 {
     class Program
     {
         static void Main(string[] args)
         {
-            string inputFile = "domain_results.txt";
-            string outputFile = "output.txt";
+            string serverAddress = "das.domreg.lt";
+            int serverPort = 4343;
 
-            try
+            char[] letters = "abcdefghijklmnopqrstuvwxyz".ToCharArray();
+
+			string resultFileName = "result.csv";
+			File.Delete(resultFileName);
+            int domainsScanned = 0;
+            Dictionary<string, int> map = new Dictionary<string, int>();
+            List<string> errors = new List<string>();
+
+			foreach (char firstLetter in letters)
             {
-                using (StreamReader reader = new StreamReader(inputFile))
-                using (StreamWriter writer = new StreamWriter(outputFile))
+                foreach (char secondLetter in letters)
                 {
-                    StringBuilder entry = new StringBuilder();
+                    domainsScanned++;
+					string domain = $"{firstLetter}{secondLetter}.lt";
+                    string query = $"get 1.0 {domain}\n";
 
-                    while (!reader.EndOfStream)
+                    try
                     {
-                        string line = reader.ReadLine();
-
-                        if (!string.IsNullOrWhiteSpace(line))
+                        using (TcpClient client = new TcpClient(serverAddress, serverPort))
                         {
-                            entry.AppendLine(line);
+                            byte[] data = Encoding.ASCII.GetBytes(query);
+                            NetworkStream stream = client.GetStream();
 
-                            if (line.StartsWith("Status: registered"))
+                            stream.Write(data, 0, data.Length);
+
+                            byte[] responseBytes = new byte[client.ReceiveBufferSize];
+                            int bytesRead = stream.Read(responseBytes, 0, client.ReceiveBufferSize);
+                            string response = Encoding.ASCII.GetString(responseBytes, 0, bytesRead);
+
+							string status = response.Substring(response.IndexOf("Status: ") + "Status: ".Length).Trim();
+							File.AppendAllText(resultFileName, $"{domain};{status}\n");
+
+                            if (map.ContainsKey(status)) map[status] = map[status] + 1; else map.Add(status, 1);
+
+							Console.Clear();
+                            Console.WriteLine("Scanning two letter .lt domains...");
+                            Console.WriteLine($"{domainsScanned}/676 domains scanned ({domain})");
+                            Console.WriteLine();
+                            Console.WriteLine("Found statuses:");
+                            Console.WriteLine(new String('-', 32));
+							Console.WriteLine(String.Format("| {0,-20} | {1,-5} |", "Status", "Count"));
+							Console.WriteLine(new String('-', 32));
+                            foreach (var item in map)
                             {
-                                entry.Clear();
+                                Console.WriteLine(String.Format("| {0,-20} | {1,-5} |", item.Key, item.Value));
                             }
-                        }
-                        else if (entry.Length > 0)
-                        {
-                            // Write the entry to the output file if it's not registered
-                            if (!entry.ToString().Contains("Status: registered"))
-                            {
-                                writer.Write(entry.ToString());
-                                writer.WriteLine();
-                            }
+							Console.WriteLine(new String('-', 32));
+							Console.WriteLine($"Full output: {resultFileName}");
 
-                            entry.Clear();
-                        }
-                    }
-
-                    // Write the last entry if it's not registered
-                    if (!entry.ToString().Contains("Status: registered"))
+							if (errors.Count > 0) {
+								Console.WriteLine();
+								Console.WriteLine($"Failed to query domains: {String.Join(", ", errors)}");
+							}
+						}
+					}
+                    catch (Exception ex)
                     {
-                        writer.Write(entry.ToString());
-                    }
+						File.AppendAllText(resultFileName, $"{domain};unknown\n");
+						errors.Append(domain);
+					}
                 }
+            }
 
-                Console.WriteLine("Filtered output file created successfully.");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"An error occurred: {ex.Message}");
-            }
+			Console.WriteLine();
+			Console.WriteLine("Domain scan complete.");
+            Console.ReadKey();
         }
     }
 }
